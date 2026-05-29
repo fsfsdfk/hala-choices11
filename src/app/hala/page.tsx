@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic';
+
 import { isHalaAuthenticated } from "@/lib/auth";
 import { halaLogin } from "@/lib/auth-actions";
 import HalaWelcome from "@/components/hala/HalaWelcome";

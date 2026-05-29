@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic';
+
 import { isAdminAuthenticated } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import AdminLogin from "@/components/admin/AdminLogin";

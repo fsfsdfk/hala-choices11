@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic';
+
 import { isHalaAuthenticated } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { getItemsWithChoices, getCategories } from "@/lib/actions";
