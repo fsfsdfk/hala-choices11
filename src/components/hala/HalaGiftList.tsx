@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import {
   Heart, Leaf, Search, ArrowLeft, MessageCircle, Sparkles,
   ThumbsUp, ThumbsDown, Circle,
@@ -21,9 +21,11 @@ interface Props {
 function getItemStatus(item: ItemWithChoice): "liked" | "disliked" | "unchosen" {
   const choices = item.choices ?? [];
   const hasApprovedVariant = choices.some((c) => c.variant_id !== null && c.hala_approved);
-  if (hasApprovedVariant || item.choice?.hala_approved === true) return "liked";
-  const hasDisapproved = item.choice?.hala_approved === false;
-  if (hasDisapproved) return "disliked";
+  if (hasApprovedVariant) return "liked";
+  // Check non-variant choice
+  const baseChoice = choices.find((c) => c.variant_id === null) ?? item.choice ?? null;
+  if (baseChoice?.hala_approved === true) return "liked";
+  if (baseChoice?.hala_approved === false) return "disliked";
   return "unchosen";
 }
 
@@ -43,16 +45,20 @@ export default function HalaGiftList({ initialItems, categories }: Props) {
   const [showWishlist, setShowWishlist] = useState(false);
   const [chatUnread, setChatUnread] = useState(false);
 
+  // Use a ref to access selectedItem inside callbacks without triggering re-subscription
+  const selectedItemRef = useRef<ItemWithChoice | null>(null);
+  selectedItemRef.current = selectedItem;
+
   const supabase = useMemo(() => createSupabaseClient(), []);
 
-  // Live updates from Supabase
+  // Live updates from Supabase — stable callback (no selectedItem in deps)
   const refreshItems = useCallback(async () => {
     try {
-      const { data: items } = await supabase.from("items").select("*").order("created_at", { ascending: false });
+      const { data: itemsData } = await supabase.from("items").select("*").order("created_at", { ascending: false });
       const { data: variants } = await supabase.from("item_variants").select("*").order("sort_order", { ascending: true });
       const { data: choices } = await supabase.from("choices").select("*");
-      if (!items) return;
-      const merged = items.map((item) => {
+      if (!itemsData) return;
+      const merged = itemsData.map((item) => {
         const itemVariants = (variants ?? []).filter((v) => v.item_id === item.id);
         const itemChoices = (choices ?? []).filter((c) => c.item_id === item.id);
         return {
@@ -63,15 +69,16 @@ export default function HalaGiftList({ initialItems, categories }: Props) {
         };
       });
       setItems(merged);
-      // Update selected item if open
-      if (selectedItem) {
-        const updated = merged.find((i) => i.id === selectedItem.id);
+      // Update selected item via ref — no closure staleness
+      const current = selectedItemRef.current;
+      if (current) {
+        const updated = merged.find((i) => i.id === current.id);
         if (updated) setSelectedItem(updated);
       }
     } catch (e) {
       console.error(e);
     }
-  }, [supabase, selectedItem]);
+  }, [supabase]); // stable: supabase never changes
 
   useEffect(() => {
     const channel = supabase
@@ -81,7 +88,7 @@ export default function HalaGiftList({ initialItems, categories }: Props) {
       .on("postgres_changes", { event: "*", schema: "public", table: "choices" }, refreshItems)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [supabase, refreshItems]);
+  }, [supabase, refreshItems]); // stable — won't re-subscribe on every render
 
   // Listen for admin chat messages to show unread badge
   useEffect(() => {
@@ -117,21 +124,19 @@ export default function HalaGiftList({ initialItems, categories }: Props) {
     });
   }, [items, search, selectedCategory, healthyOnly, likeFilter]);
 
+  // Called by modal after any choice action (submit or undo)
   function handleChoiceUpdate(itemId: string, choices: Choice[]) {
+    const baseChoice = choices.find((c) => c.variant_id === null) ?? null;
     setItems((prev) =>
       prev.map((item) =>
         item.id === itemId
-          ? {
-              ...item,
-              choices,
-              choice: choices.find((c) => c.variant_id === null) ?? null,
-            }
+          ? { ...item, choices, choice: baseChoice }
           : item
       )
     );
-    if (selectedItem?.id === itemId) {
+    if (selectedItemRef.current?.id === itemId) {
       setSelectedItem((prev) =>
-        prev ? { ...prev, choices, choice: choices.find((c) => c.variant_id === null) ?? null } : null
+        prev ? { ...prev, choices, choice: baseChoice } : null
       );
     }
   }

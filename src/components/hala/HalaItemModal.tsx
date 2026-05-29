@@ -17,11 +17,10 @@ export default function HalaItemModal({ item, onClose, onChoiceUpdate }: Props) 
   const [currentImage, setCurrentImage] = useState(0);
   const [flirtyMsg, setFlirtyMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
-  // Always sync localChoices from the item prop (fixes stale state after DB changes)
   const [localChoices, setLocalChoices] = useState<Choice[]>(item.choices ?? []);
   const [hearts, setHearts] = useState<{ id: number; x: number; y: number }[]>([]);
 
-  // Re-sync whenever the parent refreshes item data (e.g. DB deletion)
+  // Re-sync whenever the parent refreshes item data (e.g. from Supabase realtime)
   useEffect(() => {
     setLocalChoices(item.choices ?? []);
   }, [item.choices]);
@@ -53,41 +52,62 @@ export default function HalaItemModal({ item, onClose, onChoiceUpdate }: Props) 
     setTimeout(() => setHearts([]), 1800);
   }, []);
 
+  // ── Helpers ──
+
+  function getVariantChoice(variantId: string): Choice | undefined {
+    return localChoices.find((c) => c.variant_id === variantId);
+  }
+
+  function getBaseChoice(): Choice | undefined {
+    return localChoices.find((c) => c.variant_id === null);
+  }
+
   function isVariantChosen(variantId: string): boolean {
-    return localChoices.some((c) => c.variant_id === variantId && c.hala_approved);
+    return getVariantChoice(variantId)?.hala_approved === true;
   }
 
   function isVariantDisliked(variantId: string): boolean {
-    return localChoices.some((c) => c.variant_id === variantId && !c.hala_approved);
+    return getVariantChoice(variantId)?.hala_approved === false;
   }
 
   function isItemChosen(): boolean {
-    return localChoices.some((c) => c.variant_id === null && c.hala_approved);
+    return getBaseChoice()?.hala_approved === true;
   }
 
   function isItemDisliked(): boolean {
-    return localChoices.some((c) => c.variant_id === null && !c.hala_approved);
+    return getBaseChoice()?.hala_approved === false;
   }
 
   function hasItemChoice(): boolean {
-    return localChoices.some((c) => c.variant_id === null);
+    return getBaseChoice() !== undefined;
   }
 
-  // ── Helpers to update local state and notify parent ──
+  // Apply updated choices locally and notify parent
   function applyChoices(updated: Choice[]) {
     setLocalChoices(updated);
     onChoiceUpdate(item.id, updated);
   }
 
   // ── Variant actions ──
+
   async function handleVariantToggle(variantId: string) {
     setLoading(variantId);
     const currentlyChosen = isVariantChosen(variantId);
     const newApproved = !currentlyChosen;
     try {
       await submitChoice(item.id, newApproved, variantId);
-      const updated = localChoices.filter((c) => c.variant_id !== variantId);
-      updated.push({ id: "temp-" + variantId, item_id: item.id, variant_id: variantId, hala_approved: newApproved, chosen_at: new Date().toISOString() });
+      // Replace or add the choice for this variant
+      const without = localChoices.filter((c) => c.variant_id !== variantId);
+      const updated: Choice[] = [
+        ...without,
+        {
+          id: "temp-" + variantId,
+          item_id: item.id,
+          variant_id: variantId,
+          hala_approved: newApproved,
+          chosen_at: new Date().toISOString(),
+        },
+      ];
       applyChoices(updated);
       if (newApproved) { setFlirtyMsg(getRandomFlirtyMessage()); spawnHearts(); }
       else setFlirtyMsg(null);
@@ -99,18 +119,32 @@ export default function HalaItemModal({ item, onClose, onChoiceUpdate }: Props) 
     setLoading("undo-" + variantId);
     try {
       await removeChoice(item.id, variantId);
-      applyChoices(localChoices.filter((c) => c.variant_id !== variantId));
+      // Remove the choice for this specific variant only
+      const updated = localChoices.filter((c) => c.variant_id !== variantId);
+      applyChoices(updated);
       setFlirtyMsg(null);
     } catch (e) { console.error(e); }
     finally { setLoading(null); }
   }
 
   // ── Item-level (no variants) actions ──
+
   async function handleApprove() {
     setLoading("item");
     try {
       await submitChoice(item.id, true, null);
-      const updated = [...localChoices.filter((c) => c.variant_id !== null), { id: "temp-item", item_id: item.id, variant_id: null, hala_approved: true, chosen_at: new Date().toISOString() }];
+      // Keep all variant choices, replace base choice
+      const withoutBase = localChoices.filter((c) => c.variant_id !== null);
+      const updated: Choice[] = [
+        ...withoutBase,
+        {
+          id: "temp-item",
+          item_id: item.id,
+          variant_id: null,
+          hala_approved: true,
+          chosen_at: new Date().toISOString(),
+        },
+      ];
       applyChoices(updated);
       setFlirtyMsg(getRandomFlirtyMessage());
       spawnHearts();
@@ -122,7 +156,17 @@ export default function HalaItemModal({ item, onClose, onChoiceUpdate }: Props) 
     setLoading("item");
     try {
       await submitChoice(item.id, false, null);
-      const updated = [...localChoices.filter((c) => c.variant_id !== null), { id: "temp-item", item_id: item.id, variant_id: null, hala_approved: false, chosen_at: new Date().toISOString() }];
+      const withoutBase = localChoices.filter((c) => c.variant_id !== null);
+      const updated: Choice[] = [
+        ...withoutBase,
+        {
+          id: "temp-item",
+          item_id: item.id,
+          variant_id: null,
+          hala_approved: false,
+          chosen_at: new Date().toISOString(),
+        },
+      ];
       applyChoices(updated);
       setFlirtyMsg(null);
     } catch (e) { console.error(e); }
@@ -133,7 +177,9 @@ export default function HalaItemModal({ item, onClose, onChoiceUpdate }: Props) 
     setLoading("undo");
     try {
       await removeChoice(item.id, null);
-      applyChoices(localChoices.filter((c) => c.variant_id !== null));
+      // Remove ONLY the base (null variant_id) choice; keep all variant choices intact
+      const updated = localChoices.filter((c) => c.variant_id !== null);
+      applyChoices(updated);
       setFlirtyMsg(null);
     } catch (e) { console.error(e); }
     finally { setLoading(null); }
@@ -260,18 +306,23 @@ export default function HalaItemModal({ item, onClose, onChoiceUpdate }: Props) 
                             {variant.label}
                           </span>
                           {chosen && <span className="text-xs text-rose-400" style={{ fontFamily: "var(--font-jost)" }}>❤️ selected</span>}
+                          {disliked && <span className="text-xs text-gray-400" style={{ fontFamily: "var(--font-jost)" }}>✗ nope</span>}
                         </button>
 
-                        {/* Undo button for this variant */}
+                        {/* Undo button for this variant — shown whenever a choice exists */}
                         {hasChoice && (
                           <button
                             onClick={() => handleVariantUndo(variant.id)}
                             disabled={isUndoing || isLoadingThis}
                             className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 transition-all hover:bg-rose-50"
-                            style={{ border: "1.5px solid rgba(244,63,94,0.2)", color: "#f43f5e" }}
+                            style={{ border: "1.5px solid rgba(244,63,94,0.2)", color: "#f43f5e", opacity: isUndoing ? 0.5 : 1 }}
                             title="Undo this choice"
                           >
-                            <RotateCcw size={14} />
+                            {isUndoing ? (
+                              <span className="w-3 h-3 border-2 border-rose-400 border-t-transparent rounded-full animate-spin inline-block" />
+                            ) : (
+                              <RotateCcw size={14} />
+                            )}
                           </button>
                         )}
                       </div>
@@ -337,7 +388,11 @@ export default function HalaItemModal({ item, onClose, onChoiceUpdate }: Props) 
                       opacity: loading === "undo" ? 0.6 : 1,
                     }}
                   >
-                    <RotateCcw size={13} />
+                    {loading === "undo" ? (
+                      <span className="w-3 h-3 border-2 border-rose-400 border-t-transparent rounded-full animate-spin inline-block" />
+                    ) : (
+                      <RotateCcw size={13} />
+                    )}
                     Undo my choice
                   </button>
                 )}
