@@ -78,6 +78,7 @@ export default function HalaGiftList({ initialItems, categories }: Props) {
       .channel("hala-items-live")
       .on("postgres_changes", { event: "*", schema: "public", table: "items" }, refreshItems)
       .on("postgres_changes", { event: "*", schema: "public", table: "item_variants" }, refreshItems)
+      .on("postgres_changes", { event: "*", schema: "public", table: "choices" }, refreshItems)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [supabase, refreshItems]);

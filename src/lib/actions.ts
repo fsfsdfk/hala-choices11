@@ -37,33 +37,76 @@ export async function getItemsWithChoices(): Promise<ItemWithChoice[]> {
       ...item,
       variants: itemVariants,
       choices: itemChoices,
-      // legacy single-choice field (used when no variants)
       choice: itemChoices.find((c) => c.variant_id === null) ?? null,
     };
   });
 }
 
 /**
- * Submit Hala's choice for an item or a specific variant.
- * - If variantId is provided → save/toggle that specific variant
- * - If no variantId → save for the whole item (no-variant path)
+ * Submit or update Hala's choice for an item or a specific variant.
+ * Handles the NULL variant_id case correctly by doing delete+insert
+ * instead of upsert (Postgres UNIQUE indexes don't match NULL = NULL).
  */
 export async function submitChoice(
   itemId: string,
   approved: boolean,
   variantId?: string | null
 ): Promise<void> {
-  const { error } = await createSupabaseClient().from("choices").upsert(
-    {
-      item_id: itemId,
-      variant_id: variantId ?? null,
-      hala_approved: approved,
-      chosen_at: new Date().toISOString(),
-    },
-    { onConflict: "item_id,variant_id" }
-  );
+  const db = createSupabaseClient();
+  const vid = variantId ?? null;
+
+  // Delete any existing choice for this (item, variant) pair first
+  if (vid === null) {
+    await db
+      .from("choices")
+      .delete()
+      .eq("item_id", itemId)
+      .is("variant_id", null);
+  } else {
+    await db
+      .from("choices")
+      .delete()
+      .eq("item_id", itemId)
+      .eq("variant_id", vid);
+  }
+
+  // Insert fresh
+  const { error } = await db.from("choices").insert({
+    item_id: itemId,
+    variant_id: vid,
+    hala_approved: approved,
+    chosen_at: new Date().toISOString(),
+  });
 
   if (error) throw new Error(error.message);
+  revalidatePath("/");
+  revalidatePath("/admin");
+}
+
+/**
+ * Completely remove a choice (undo) for an item or variant.
+ */
+export async function removeChoice(
+  itemId: string,
+  variantId?: string | null
+): Promise<void> {
+  const db = createSupabaseClient();
+  const vid = variantId ?? null;
+
+  if (vid === null) {
+    await db
+      .from("choices")
+      .delete()
+      .eq("item_id", itemId)
+      .is("variant_id", null);
+  } else {
+    await db
+      .from("choices")
+      .delete()
+      .eq("item_id", itemId)
+      .eq("variant_id", vid);
+  }
+
   revalidatePath("/");
   revalidatePath("/admin");
 }
@@ -127,9 +170,7 @@ export async function adminUpdateItem(
   const { error } = await db.from("items").update(data).eq("id", id);
   if (error) throw new Error(error.message);
 
-  // If variantLabels is provided (even as empty array), replace all variants
   if (variantLabels !== undefined) {
-    // Delete all existing variants for this item (cascade deletes related choices)
     await db.from("item_variants").delete().eq("item_id", id);
 
     const rows = variantLabels
