@@ -90,3 +90,9 @@ alter publication supabase_realtime add table public.items;
 -- ============================================
 -- insert into public.items (name, description, price, category, healthy, image_urls) values
 --   ('Example Item', 'A lovely example gift', 99.99, 'Jewelry', false, '{}');
+
+-- Allow public DELETE on choices (needed for undo / re-choice)
+-- Without this, the anon key cannot delete rows and undo silently fails.
+create policy if not exists "Public can delete choices"
+  on public.choices for delete
+  using (true);

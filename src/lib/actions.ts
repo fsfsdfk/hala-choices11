@@ -46,32 +46,38 @@ export async function getItemsWithChoices(): Promise<ItemWithChoice[]> {
  * Submit or update Hala's choice for an item or a specific variant.
  * Handles the NULL variant_id case correctly by doing delete+insert
  * instead of upsert (Postgres UNIQUE indexes don't match NULL = NULL).
+ * Uses service client for the delete step because there is no public
+ * DELETE RLS policy on the choices table.
  */
 export async function submitChoice(
   itemId: string,
   approved: boolean,
   variantId?: string | null
 ): Promise<void> {
-  const db = createSupabaseClient();
+  // Service client bypasses RLS — needed for DELETE (no public delete policy)
+  const svc = createServiceClient();
+  const pub = createSupabaseClient();
   const vid = variantId ?? null;
 
   // Delete any existing choice for this (item, variant) pair first
   if (vid === null) {
-    await db
+    const { error: delErr } = await svc
       .from("choices")
       .delete()
       .eq("item_id", itemId)
       .is("variant_id", null);
+    if (delErr) throw new Error(delErr.message);
   } else {
-    await db
+    const { error: delErr } = await svc
       .from("choices")
       .delete()
       .eq("item_id", itemId)
       .eq("variant_id", vid);
+    if (delErr) throw new Error(delErr.message);
   }
 
-  // Insert fresh
-  const { error } = await db.from("choices").insert({
+  // Insert fresh (public client is fine — insert policy exists)
+  const { error } = await pub.from("choices").insert({
     item_id: itemId,
     variant_id: vid,
     hala_approved: approved,
@@ -85,26 +91,30 @@ export async function submitChoice(
 
 /**
  * Completely remove a choice (undo) for an item or variant.
+ * Uses service client because there is no public DELETE RLS policy.
  */
 export async function removeChoice(
   itemId: string,
   variantId?: string | null
 ): Promise<void> {
-  const db = createSupabaseClient();
+  // Must use service client — anon key has no DELETE policy on choices
+  const db = createServiceClient();
   const vid = variantId ?? null;
 
   if (vid === null) {
-    await db
+    const { error } = await db
       .from("choices")
       .delete()
       .eq("item_id", itemId)
       .is("variant_id", null);
+    if (error) throw new Error(error.message);
   } else {
-    await db
+    const { error } = await db
       .from("choices")
       .delete()
       .eq("item_id", itemId)
       .eq("variant_id", vid);
+    if (error) throw new Error(error.message);
   }
 
   revalidatePath("/");
