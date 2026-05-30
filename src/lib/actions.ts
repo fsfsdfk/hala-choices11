@@ -30,14 +30,20 @@ export async function getItemsWithChoices(): Promise<ItemWithChoice[]> {
 
   if (choicesError) throw new Error(choicesError.message);
 
+  const { data: reactions } = await createSupabaseClient()
+    .from("item_reactions")
+    .select("*");
+
   return (items ?? []).map((item) => {
     const itemVariants = (variants ?? []).filter((v) => v.item_id === item.id);
     const itemChoices = (choices ?? []).filter((c) => c.item_id === item.id);
+    const reaction = (reactions ?? []).find((r) => r.item_id === item.id) ?? null;
     return {
       ...item,
       variants: itemVariants,
       choices: itemChoices,
       choice: itemChoices.find((c) => c.variant_id === null) ?? null,
+      reaction,
     };
   });
 }
@@ -263,4 +269,57 @@ export async function getCategories(): Promise<string[]> {
 
   const cats = [...new Set((data ?? []).map((i) => i.category))];
   return cats;
+}
+
+// ============================================
+// ITEM REACTIONS & NOTES
+// ============================================
+
+import type { ItemReaction } from "@/types";
+
+export async function getItemReaction(itemId: string): Promise<ItemReaction | null> {
+  const { data } = await createSupabaseClient()
+    .from("item_reactions")
+    .select("*")
+    .eq("item_id", itemId)
+    .maybeSingle();
+  return data ?? null;
+}
+
+export async function upsertItemReaction(
+  itemId: string,
+  emoji: string | null,
+  note: string | null
+): Promise<void> {
+  // Fetch existing row
+  const { data: existing } = await createServiceClient()
+    .from("item_reactions")
+    .select("id")
+    .eq("item_id", itemId)
+    .maybeSingle();
+
+  if (existing) {
+    const { error } = await createServiceClient()
+      .from("item_reactions")
+      .update({ emoji, note, updated_at: new Date().toISOString() })
+      .eq("item_id", itemId);
+    if (error) throw new Error(error.message);
+  } else {
+    const { error } = await createSupabaseClient()
+      .from("item_reactions")
+      .insert({ item_id: itemId, emoji, note });
+    if (error) throw new Error(error.message);
+  }
+  revalidatePath("/");
+  revalidatePath("/admin");
+}
+
+export async function removeItemReaction(itemId: string): Promise<void> {
+  const { error } = await createServiceClient()
+    .from("item_reactions")
+    .delete()
+    .eq("item_id", itemId);
+  if (error) throw new Error(error.message);
+  revalidatePath("/");
+  revalidatePath("/admin");
 }

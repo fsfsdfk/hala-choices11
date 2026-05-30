@@ -10,7 +10,7 @@ import Image from "next/image";
 import HalaItemModal from "./HalaItemModal";
 import HalaChatPanel from "./HalaChatPanel";
 import HalaWishlistView from "./HalaWishlistView";
-import type { Choice, ItemWithChoice, LikeFilter } from "@/types";
+import type { Choice, ItemReaction, ItemWithChoice, LikeFilter } from "@/types";
 import { createSupabaseClient } from "@/lib/supabase";
 
 interface Props {
@@ -57,15 +57,18 @@ export default function HalaGiftList({ initialItems, categories }: Props) {
       const { data: itemsData } = await supabase.from("items").select("*").order("created_at", { ascending: false });
       const { data: variants } = await supabase.from("item_variants").select("*").order("sort_order", { ascending: true });
       const { data: choices } = await supabase.from("choices").select("*");
+      const { data: reactions } = await supabase.from("item_reactions").select("*");
       if (!itemsData) return;
       const merged = itemsData.map((item) => {
         const itemVariants = (variants ?? []).filter((v) => v.item_id === item.id);
         const itemChoices = (choices ?? []).filter((c) => c.item_id === item.id);
+        const reaction = (reactions ?? []).find((r: { item_id: string }) => r.item_id === item.id) ?? null;
         return {
           ...item,
           variants: itemVariants,
           choices: itemChoices,
           choice: itemChoices.find((c) => c.variant_id === null) ?? null,
+          reaction,
         };
       });
       setItems(merged);
@@ -124,19 +127,19 @@ export default function HalaGiftList({ initialItems, categories }: Props) {
     });
   }, [items, search, selectedCategory, healthyOnly, likeFilter]);
 
-  // Called by modal after any choice action (submit or undo)
-  function handleChoiceUpdate(itemId: string, choices: Choice[]) {
+  // Called by modal after any choice/reaction action
+  function handleChoiceUpdate(itemId: string, choices: Choice[], reaction?: ItemReaction | null) {
     const baseChoice = choices.find((c) => c.variant_id === null) ?? null;
     setItems((prev) =>
       prev.map((item) =>
         item.id === itemId
-          ? { ...item, choices, choice: baseChoice }
+          ? { ...item, choices, choice: baseChoice, ...(reaction !== undefined ? { reaction } : {}) }
           : item
       )
     );
     if (selectedItemRef.current?.id === itemId) {
       setSelectedItem((prev) =>
-        prev ? { ...prev, choices, choice: baseChoice } : null
+        prev ? { ...prev, choices, choice: baseChoice, ...(reaction !== undefined ? { reaction } : {}) } : null
       );
     }
   }
@@ -489,6 +492,26 @@ function GiftCard({ item, index, onClick }: { item: ItemWithChoice; index: numbe
               }}
             >
               <Leaf size={9} /> Healthy
+            </div>
+          )}
+
+          {/* Emoji reaction badge */}
+          {item.reaction?.emoji && (
+            <div
+              className="absolute bottom-2 left-2 w-7 h-7 rounded-full flex items-center justify-center text-base shadow-md"
+              style={{ background: "rgba(255,255,255,0.92)", backdropFilter: "blur(4px)" }}
+            >
+              {item.reaction.emoji}
+            </div>
+          )}
+
+          {/* Note indicator */}
+          {item.reaction?.note && !item.reaction?.emoji && (
+            <div
+              className="absolute bottom-2 left-2 w-7 h-7 rounded-full flex items-center justify-center text-sm shadow-md"
+              style={{ background: "rgba(255,255,255,0.92)", backdropFilter: "blur(4px)" }}
+            >
+              💭
             </div>
           )}
         </div>

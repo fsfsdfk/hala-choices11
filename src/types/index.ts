@@ -29,12 +29,23 @@ export interface Choice {
   chosen_at: string;
 }
 
+export interface ItemReaction {
+  id: string;
+  item_id: string;
+  emoji: string | null;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ItemWithChoice extends Item {
   variants?: ItemVariant[];
   /** All choices for this item (one per variant, or one total if no variants) */
   choices?: Choice[];
   /** Legacy single-choice field (kept for backward compat with no-variant items) */
   choice?: Choice | null;
+  /** Hala's emoji reaction + note on this item */
+  reaction?: ItemReaction | null;
 }
 
 export type Category =
@@ -98,6 +109,7 @@ export interface ChatMessage {
   id: string;
   sender: "admin" | "hala";
   content: string;
+  reactions: Record<string, string[]>; // { "💕": ["hala", "admin"] }
   created_at: string;
 }
 
@@ -105,3 +117,9 @@ export interface ChatMessage {
 // Filter states
 // ============================================
 export type LikeFilter = "all" | "liked" | "disliked" | "unchosen";
+
+// ============================================
+// Emoji sets
+// ============================================
+export const CHAT_EMOJIS = ["💕", "😍", "🥺", "😂", "❤️", "🔥", "😘", "🥰"];
+export const ITEM_EMOJIS  = ["💕", "😍", "🔥", "✨", "🥺", "💸", "🤩", "💎"];
